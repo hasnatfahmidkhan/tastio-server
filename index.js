@@ -85,7 +85,7 @@ async function run() {
       const newReview = req.body;
       const tokenEmail = req.token_email;
 
-      if (tokenEmail === newReview.email) {
+      if (tokenEmail === newReview.reviewerEmail) {
         const result = await reviewsCollection.insertOne({
           ...newReview,
         });
