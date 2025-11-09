@@ -1,15 +1,34 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
-
+const admin = require("firebase-admin");
 require("dotenv").config();
 
 const app = express();
 const port = 3000;
 
+const serviceAccount = require("./tastio-web-fb-service-key.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 // middle ware
 app.use(cors());
 app.use(express.json());
+
+// Firebase middle
+const verifyFBToken = async (req, res, next) => {
+  const authorization = req.headers.authorization;
+
+  if (!authorization) {
+    return res.status(401).send({ message: "unauthorized acess" });
+  }
+  const token = authorization.split(" ")[1];
+  const decoded = await admin.auth().verifyIdToken(token);
+  req.token_email = decoded.email;
+  next();
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk2ebsj.mongodb.net/?appName=Cluster0`;
 
@@ -61,6 +80,18 @@ async function run() {
       res.status(200).send(result);
     });
 
+    //? Reviews POST Api
+    app.post("/reviews", verifyFBToken, async (req, res) => {
+      const newReview = req.body;
+      const tokenEmail = req.token_email;
+
+      if (tokenEmail === newReview.email) {
+        const result = await reviewsCollection.insertOne({
+          ...newReview,
+        });
+        res.status(200).send(result);
+      }
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
