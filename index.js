@@ -1,13 +1,17 @@
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 require("dotenv").config();
 
 const app = express();
 const port = 3000;
 
-const serviceAccount = require("./tastio-web-fb-service-key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
+
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -80,6 +84,21 @@ async function run() {
       res.status(200).send(result);
     });
 
+    // my reviews api
+    app.get("/my-reviews", verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const tokenEmail = req.token_email;
+      const filter = {};
+      if (email === tokenEmail) {
+        filter.reviewerEmail = email;
+      }
+      const result = await reviewsCollection
+        .find(filter)
+        .sort({ postedAt: -1 })
+        .toArray();
+      res.status(200).send(result);
+    });
+
     //? Reviews POST Api
     app.post("/reviews", verifyFBToken, async (req, res) => {
       const newReview = req.body;
@@ -91,6 +110,14 @@ async function run() {
         });
         res.status(200).send(result);
       }
+    });
+
+    //! delete review
+    app.delete("/my-reviews/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const result = await reviewsCollection.deleteOne(filter);
+      res.status(200).send(result);
     });
 
     await client.db("admin").command({ ping: 1 });
