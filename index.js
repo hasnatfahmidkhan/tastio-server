@@ -84,6 +84,16 @@ async function run() {
       res.status(200).send(result);
     });
 
+    // reviews details api
+    app.get("/reviews/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+
+      const result = await reviewsCollection.findOne(filter);
+
+      res.status(200).send(result);
+    });
+
     // my reviews api
     app.get("/my-reviews", verifyFBToken, async (req, res) => {
       const email = req.query.email;
@@ -110,6 +120,13 @@ async function run() {
         });
         res.status(200).send(result);
       }
+    });
+
+    //? update review
+    app.patch("/reviews/:id", verifyFBToken, async (req, res) => {
+      const updateReivew = req.body;
+      console.log(updateReivew);
+      res.status(200).send({ message: "data updated" });
     });
 
     //! delete review
