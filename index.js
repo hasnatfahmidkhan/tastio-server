@@ -125,8 +125,16 @@ async function run() {
     //? update review
     app.patch("/reviews/:id", verifyFBToken, async (req, res) => {
       const updateReivew = req.body;
-      console.log(updateReivew);
-      res.status(200).send({ message: "data updated" });
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const { _id, ...update } = updateReivew;
+      const options = {};
+      const result = await reviewsCollection.updateOne(
+        filter,
+        { $set: update },
+        options
+      );
+      res.status(200).send(result);
     });
 
     //! delete review
