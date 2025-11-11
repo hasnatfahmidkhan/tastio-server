@@ -149,7 +149,21 @@ async function run() {
       res.status(200).send(result);
     });
 
+    //? get favourite review
+    app.get("/favourites", verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const tokenEmail = req.token_email;
 
+      const filter = {};
+      if (email) {
+        if (email !== tokenEmail) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+        filter.email = email;
+      }
+      const result = await favouriteCollection.find(filter).toArray();
+      res.status(200).send(result);
+    });
 
     //? favourite review
     app.post("/favourites", verifyFBToken, async (req, res) => {
@@ -162,8 +176,6 @@ async function run() {
       const result = await favouriteCollection.insertOne(favourite);
       res.status(200).send(result);
     });
-
-    
 
     await client.db("admin").command({ ping: 1 });
     console.log(
