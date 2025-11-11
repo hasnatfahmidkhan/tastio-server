@@ -177,6 +177,14 @@ async function run() {
       res.status(200).send(result);
     });
 
+    //! delete favourite review
+    app.delete("/favourites/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const result = await favouriteCollection.deleteOne(filter);
+      res.send(result);
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
