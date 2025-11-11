@@ -50,6 +50,7 @@ async function run() {
     const tastioDB = client.db("tastioDB");
     const usersCollection = tastioDB.collection("users");
     const reviewsCollection = tastioDB.collection("reviews");
+    const favouriteCollection = tastioDB.collection("favourite");
 
     // user insert into db api
     app.post("/users", async (req, res) => {
@@ -100,7 +101,11 @@ async function run() {
       const tokenEmail = req.token_email;
       const filter = {};
       if (email === tokenEmail) {
-        filter.reviewerEmail = email;
+        if (email !== tokenEmail) {
+          return res.status(403).send({ message: "forbidden access" });
+        } else {
+          filter.reviewerEmail = email;
+        }
       }
       const result = await reviewsCollection
         .find(filter)
@@ -124,10 +129,9 @@ async function run() {
 
     //? update review
     app.patch("/reviews/:id", verifyFBToken, async (req, res) => {
-      const updateReivew = req.body;
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
-      const { _id, ...update } = updateReivew;
+      const { _id, ...update } = req.body;
       const options = {};
       const result = await reviewsCollection.updateOne(
         filter,
@@ -144,6 +148,22 @@ async function run() {
       const result = await reviewsCollection.deleteOne(filter);
       res.status(200).send(result);
     });
+
+
+
+    //? favourite review
+    app.post("/favourites", verifyFBToken, async (req, res) => {
+      const favourite = req.body;
+      const id = favourite.review;
+      const isExits = await favouriteCollection.findOne({ review: id });
+      if (isExits) {
+        return res.send({ message: "review all ready in favourite" });
+      }
+      const result = await favouriteCollection.insertOne(favourite);
+      res.status(200).send(result);
+    });
+
+    
 
     await client.db("admin").command({ ping: 1 });
     console.log(
