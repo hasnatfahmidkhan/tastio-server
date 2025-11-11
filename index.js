@@ -95,6 +95,14 @@ async function run() {
       res.status(200).send(result);
     });
 
+    // search review
+    app.get("/search", async (req, res) => {
+      const searchText = req.query.search;
+      const filter = { foodName: { $regex: searchText, $options: "i" } };
+      const result = await reviewsCollection.find(filter).toArray();
+      res.send(result);
+    });
+
     // my reviews api
     app.get("/my-reviews", verifyFBToken, async (req, res) => {
       const email = req.query.email;
