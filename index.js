@@ -177,11 +177,6 @@ async function run() {
     //? favourite review
     app.post("/favourites", verifyFBToken, async (req, res) => {
       const favourite = req.body;
-      const id = favourite.review;
-      const isExits = await favouriteCollection.findOne({ review: id });
-      if (isExits) {
-        return res.send({ message: "review all ready in favourite" });
-      }
       const result = await favouriteCollection.insertOne(favourite);
       res.status(200).send(result);
     });
@@ -191,6 +186,37 @@ async function run() {
       const id = req.params.id;
       const filter = { _id: new ObjectId(id) };
       const result = await favouriteCollection.deleteOne(filter);
+      res.send(result);
+    });
+
+    // count review of users
+    app.get("/topReviewes", async (req, res) => {
+      const result = await reviewsCollection
+        .aggregate([
+          { $group: { _id: "$reviewerEmail", totalReviews: { $sum: 1 } } },
+          { $sort: { totalReviews: -1 } },
+          { $limit: 3 },
+          {
+            $lookup: {
+              from: "users",
+              localField: "_id",
+              foreignField: "email",
+              as: "userInfo",
+            },
+          },
+          { $unwind: "$userInfo" },
+          {
+            $project: {
+              _id: 0,
+              reviewerEmail: "$_id",
+              name: "$userInfo.name",
+              photo: "$userInfo.photo",
+              totalReviews: 1,
+            },
+          },
+        ])
+        .toArray();
+
       res.send(result);
     });
 
