@@ -189,33 +189,35 @@ async function run() {
       res.send(result);
     });
 
-    // count review of users
-    app.get("/topReviewes", async (req, res) => {
-      const result = await reviewsCollection
-        .aggregate([
-          { $group: { _id: "$reviewerEmail", totalReviews: { $sum: 1 } } },
-          { $sort: { totalReviews: -1 } },
-          { $limit: 4 },
-          {
-            $lookup: {
-              from: "users",
-              localField: "_id",
-              foreignField: "email",
-              as: "userInfo",
-            },
+    // leaderboard for reviewers
+    app.get("/leaderboard", async (req, res) => {
+      const { limit } = req.query;
+      const pipeline = [
+        { $group: { _id: "$reviewerEmail", totalReviews: { $sum: 1 } } },
+        { $sort: { totalReviews: -1 } },
+        // only add $limit if limit exists
+        ...(limit ? [{ $limit: Number(limit) }] : []),
+        {
+          $lookup: {
+            from: "users",
+            localField: "_id",
+            foreignField: "email",
+            as: "userInfo",
           },
-          { $unwind: "$userInfo" },
-          {
-            $project: {
-              _id: 0,
-              reviewerEmail: "$_id",
-              name: "$userInfo.name",
-              photo: "$userInfo.photo",
-              totalReviews: 1,
-            },
+        },
+        { $unwind: "$userInfo" },
+        {
+          $project: {
+            _id: 0,
+            reviewerEmail: "$_id",
+            name: "$userInfo.name",
+            photo: "$userInfo.photo",
+            totalReviews: 1,
           },
-        ])
-        .toArray();
+        },
+      ];
+
+      const result = await reviewsCollection.aggregate(pipeline).toArray();
 
       res.send(result);
     });
