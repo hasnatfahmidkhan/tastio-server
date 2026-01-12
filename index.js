@@ -51,10 +51,26 @@ async function run() {
     const usersCollection = tastioDB.collection("users");
     const reviewsCollection = tastioDB.collection("reviews");
     const favouriteCollection = tastioDB.collection("favourite");
+    const restaurantsCollection = tastioDB.collection("restaurants");
+    const menuCollection = tastioDB.collection("menu");
+
+    //? User related apis
+    // get user role
+    app.get("/users/:email/role", async (req, res) => {
+      const { email } = req.params;
+      const result = await usersCollection.findOne(
+        { email: email },
+        { projection: { role: 1, status: 1, _id: 0 } }
+      );
+
+      res.status(200).json(result);
+    });
 
     // user insert into db api
     app.post("/users", async (req, res) => {
       const newUser = req.body;
+      newUser.role = "user";
+      newUser.status = "active";
       const filter = { email: newUser.email };
       const isExits = await usersCollection.findOne(filter);
       if (isExits) {
@@ -64,6 +80,70 @@ async function run() {
         const result = await usersCollection.insertOne({ ...newUser });
         res.status(200).send(result);
       }
+    });
+
+    // restaurants apis
+    app.get("/restaurants/seller/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { ownerEmail: email };
+      const result = await restaurantsCollection.findOne(query);
+      res.send(result);
+    });
+
+    app.get("/restaurants", async (req, res) => {
+      const { status } = req.query;
+      const query = { status: status };
+      const result = await restaurantsCollection.find(query).toArray();
+      res.status(200).json(result);
+    });
+
+    app.post("/restaurants", async (req, res) => {
+      const sellerRequest = req.body;
+      sellerRequest.averageRating = 0;
+      sellerRequest.totalReviews = 0;
+      const query = { ownerEmail: sellerRequest.ownerEmail };
+      const isExitsOwner = await restaurantsCollection.findOne(query);
+      if (isExitsOwner) {
+        return res
+          .status(200)
+          .json({ isExits: true, message: "Seler already exits" });
+      }
+      const result = await restaurantsCollection.insertOne(sellerRequest);
+      res.status(201).json(result);
+    });
+
+    app.patch("/restaurants/verify/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const { email } = req.body;
+
+      const filterRestaurant = { _id: new ObjectId(id) };
+      const updateRestaurant = {
+        $set: { status: "verified" },
+      };
+      const restaurantResult = await restaurantsCollection.updateOne(
+        filterRestaurant,
+        updateRestaurant
+      );
+
+      const filterUser = { email: email };
+      const updateUser = {
+        $set: { role: "seller" },
+      };
+      const userResult = await usersCollection.updateOne(
+        filterUser,
+        updateUser
+      );
+
+      res.send({ restaurantResult, userResult });
+    });
+
+    app.post("/menu", async (req, res) => {
+      const foodItem = req.body;
+
+      foodItem.totalReviews = 0;
+      foodItem.averageRating = 0;
+      const result = await menuCollection.insertOne(foodItem);
+      res.status(201).json(result);
     });
 
     //? Reviews Get Api
