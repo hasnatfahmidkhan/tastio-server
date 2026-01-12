@@ -46,7 +46,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const tastioDB = client.db("tastioDB");
     const usersCollection = tastioDB.collection("users");
     const reviewsCollection = tastioDB.collection("reviews");
@@ -72,7 +72,7 @@ async function run() {
       const result = await reviewsCollection
         .find()
         .sort({ postedAt: -1 })
-        .limit(6)
+        .limit(8)
         .toArray();
       res.status(200).send(result);
     });
@@ -195,7 +195,7 @@ async function run() {
         .aggregate([
           { $group: { _id: "$reviewerEmail", totalReviews: { $sum: 1 } } },
           { $sort: { totalReviews: -1 } },
-          { $limit: 3 },
+          { $limit: 4 },
           {
             $lookup: {
               from: "users",
@@ -220,10 +220,10 @@ async function run() {
       res.send(result);
     });
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
   }
 }
