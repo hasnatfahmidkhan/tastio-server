@@ -88,6 +88,39 @@ async function run() {
     };
 
     //? User related apis
+    // GET User Profile Stats
+    app.get("/users/profile/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      if (email !== req.token_email)
+        return res.status(403).send({ message: "forbidden" });
+
+      // 1. Basic User Info
+      const user = await usersCollection.findOne({ email });
+
+      // 2. Extra Stats based on Role
+      let stats = {};
+
+      if (user.role === "user") {
+        const reviewCount = await reviewsCollection.countDocuments({
+          reviewerEmail: email,
+        });
+        stats = { reviewCount };
+      } else if (user.role === "seller") {
+        const restaurant = await restaurantsCollection.findOne({
+          ownerEmail: email,
+        });
+        const foodCount = await menuCollection.countDocuments({
+          sellerEmail: email,
+        });
+        stats = {
+          restaurantName: restaurant?.name || "No Shop",
+          foodCount,
+        };
+      }
+
+      res.send({ user, stats });
+    });
+
     // GET All Users (with Search & Role Filter)
     app.get("/users", verifyFBToken, verifyAdmin, async (req, res) => {
       const search = req.query.search || "";
@@ -278,12 +311,21 @@ async function run() {
       verifySeller,
       async (req, res) => {
         const email = req.params.email;
-        // সিকিউরিটি চেক: টোকেনের মালিক আর প্যারামিটার ইমেইল এক কিনা
+        const { limit = 0, sort } = req.query;
+        let sortOptions = {};
+        if (sort) {
+          sortOptions = { price: -1 };
+        }
         if (email !== req.token_email) {
           return res.status(403).send({ message: "Forbidden access" });
         }
         const query = { sellerEmail: email };
-        const result = await menuCollection.find(query).toArray();
+        const result = await menuCollection
+          .find(query)
+          .limit(Number(limit))
+          .sort(sortOptions)
+          .toArray();
+
         res.send(result);
       }
     );
@@ -383,6 +425,8 @@ async function run() {
     // my reviews api
     app.get("/my-reviews", verifyFBToken, async (req, res) => {
       const email = req.query.email;
+
+      const limit = req.query.limit;
       const tokenEmail = req.token_email;
       const filter = {};
       if (email === tokenEmail) {
@@ -395,9 +439,39 @@ async function run() {
       const result = await reviewsCollection
         .find(filter)
         .sort({ postedAt: -1 })
+        .limit(Number(limit))
         .toArray();
       res.status(200).send(result);
     });
+
+    // GET All Reviews (Admin View - with search)
+    app.get("/admin/reviews", verifyFBToken, verifyAdmin, async (req, res) => {
+      const search = req.query.search || "";
+      const query = {
+        $or: [
+          { foodTitle: { $regex: search, $options: "i" } },
+          { reviewerEmail: { $regex: search, $options: "i" } },
+        ],
+      };
+      const result = await reviewsCollection
+        .find(query)
+        .sort({ postedAt: -1 })
+        .toArray();
+      res.send(result);
+    });
+
+    // DELETE Review (Admin Power)
+    app.delete(
+      "/admin/reviews/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await reviewsCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
 
     //? Reviews POST Api
     app.post("/reviews", verifyFBToken, async (req, res) => {
@@ -408,6 +482,29 @@ async function run() {
         const result = await reviewsCollection.insertOne({
           ...newReview,
         });
+
+        // update the mune
+        await menuCollection.updateOne(
+          { _id: new ObjectId(newReview.menuId) },
+          [
+            {
+              $set: {
+                totalReviews: { $add: ["$totalReviews", 1] },
+                averageRating: {
+                  $divide: [
+                    {
+                      $add: [
+                        { $multiply: ["$averageRating", "$totalReviews"] },
+                        newReview.rating,
+                      ],
+                    },
+                    { $add: ["$totalReviews", 1] },
+                  ],
+                },
+              },
+            },
+          ]
+        );
         res.status(200).send(result);
       }
     });
@@ -538,6 +635,64 @@ async function run() {
         chartData,
       });
     });
+
+    // GET Seller Stats & Recent Reviews
+    app.get(
+      "/seller-stats/:email",
+      verifyFBToken,
+      verifySeller,
+      async (req, res) => {
+        const email = req.params.email;
+
+        // Security Check
+        if (email !== req.token_email)
+          return res.status(403).send({ message: "forbidden" });
+
+        const restaurant = await restaurantsCollection.findOne({
+          ownerEmail: email,
+        });
+        const myFoods = await menuCollection
+          .find({ sellerEmail: email })
+          .toArray();
+
+        const myFoodIds = myFoods.map((food) => food._id.toString());
+
+        const stats = await reviewsCollection
+          .aggregate([
+            {
+              $match: {
+                menuId: { $in: myFoodIds },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalReviews: { $sum: 1 },
+                avgRating: { $avg: "$rating" },
+              },
+            },
+          ])
+          .toArray();
+
+        const recentReviews = await reviewsCollection
+          .find({
+            menuId: { $in: myFoodIds },
+          })
+          .sort({ postedAt: -1 })
+          .limit(3)
+          .toArray();
+
+        const reviewStats = stats[0] || { totalReviews: 0, avgRating: 0 };
+
+        res.send({
+          restaurantName: restaurant?.name,
+          foodCount: myFoods.length,
+          totalReviews: reviewStats.totalReviews,
+          avgRating: reviewStats.avgRating.toFixed(1),
+          recentReviews,
+        });
+      }
+    );
 
     // await client.db("admin").command({ ping: 1 });
     // console.log(
