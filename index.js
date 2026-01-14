@@ -88,6 +88,51 @@ async function run() {
     };
 
     //? User related apis
+    // GET All Users (with Search & Role Filter)
+    app.get("/users", verifyFBToken, verifyAdmin, async (req, res) => {
+      const search = req.query.search || "";
+      const role = req.query.role || ""; // "admin", "seller", "user"
+
+      let query = {
+        $or: [
+          { name: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ],
+      };
+
+      if (role && role !== "All") {
+        query.role = role;
+      }
+
+      const result = await usersCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // PATCH Update User Role
+    app.patch(
+      "/users/role/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const { role } = req.body;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: { role: role },
+        };
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
+
+    // DELETE User
+    app.delete("/users/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await usersCollection.deleteOne(query);
+      res.send(result);
+    });
+
     // get user role
     app.get("/users/:email/role", async (req, res) => {
       const { email } = req.params;
