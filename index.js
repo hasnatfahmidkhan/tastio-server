@@ -30,7 +30,8 @@ const verifyFBToken = async (req, res, next) => {
   }
   const token = authorization.split(" ")[1];
   const decoded = await admin.auth().verifyIdToken(token);
-  req.token_email = decoded.email;
+
+  req.token_email = decoded?.email;
   next();
 };
 
@@ -53,6 +54,38 @@ async function run() {
     const favouriteCollection = tastioDB.collection("favourite");
     const restaurantsCollection = tastioDB.collection("restaurants");
     const menuCollection = tastioDB.collection("menu");
+
+    // Middleware for verify user
+    const verifyAdmin = async (req, res, next) => {
+      try {
+        const email = req.token_email;
+        const user = await usersCollection.findOne({ email });
+
+        if (!user || user.role !== "admin") {
+          return res.status(403).send({ message: "Admin access required" });
+        }
+
+        next();
+      } catch (error) {
+        res.status(500).send({ message: "Admin verification failed" });
+      }
+    };
+
+    const verifySeller = async (req, res, next) => {
+      try {
+        const email = req.token_email;
+
+        const user = await usersCollection.findOne({ email: email });
+
+        if (!user || user.role !== "seller") {
+          return res.status(403).send({ message: "Seller access required" });
+        }
+
+        next();
+      } catch (error) {
+        res.status(500).send({ message: "Seller verification failed" });
+      }
+    };
 
     //? User related apis
     // get user role
@@ -146,6 +179,96 @@ async function run() {
       res.status(201).json(result);
     });
 
+    // GET /all-foods with Search, Filter, Sort, Pagination
+    app.get("/all-foods", async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 9;
+      const skip = (page - 1) * limit;
+
+      const search = req.query.search || "";
+      const category = req.query.category || "";
+      const minPrice = parseInt(req.query.minPrice) || 0;
+      const maxPrice = parseInt(req.query.maxPrice) || 10000;
+      const sort = req.query.sort || "newest";
+
+      let query = {
+        name: { $regex: search, $options: "i" },
+        price: { $gte: minPrice, $lte: maxPrice },
+      };
+
+      if (category && category !== "All") {
+        query.category = category;
+      }
+
+      // Sorting Logic
+      let sortOptions = {};
+      if (sort === "price-asc") sortOptions = { price: 1 };
+      else if (sort === "price-desc") sortOptions = { price: -1 };
+      else sortOptions = { _id: -1 };
+
+      const result = await menuCollection
+        .find(query)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+      const total = await menuCollection.countDocuments(query);
+
+      res.send({ result, total });
+    });
+
+    // get food by id
+    app.get("/menu/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.findOne(query);
+      res.send(result);
+    });
+
+    // Get foods by seller email
+    app.get(
+      "/menu/seller/:email",
+      verifyFBToken,
+      verifySeller,
+      async (req, res) => {
+        const email = req.params.email;
+        // সিকিউরিটি চেক: টোকেনের মালিক আর প্যারামিটার ইমেইল এক কিনা
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+        const query = { sellerEmail: email };
+        const result = await menuCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
+
+    // update food
+    app.patch("/menu/:id", verifyFBToken, verifySeller, async (req, res) => {
+      const item = req.body;
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          description: item.description,
+          image: item.image,
+        },
+      };
+      const result = await menuCollection.updateOne(filter, updatedDoc);
+      res.send(result);
+    });
+
+    // Delete food (Only Seller can delete their own food)
+    app.delete("/menu/:id", verifyFBToken, verifySeller, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
+    });
+
     //? Reviews Get Api
     // top reviews api
     app.get("/latest-reviews", async (req, res) => {
@@ -157,13 +280,49 @@ async function run() {
       res.status(200).send(result);
     });
 
-    // all reviews api
-    app.get("/reviews", async (req, res) => {
-      const result = await reviewsCollection
-        .find()
-        .sort({ postedAt: -1 })
-        .toArray();
-      res.status(200).send(result);
+    // GET /all-reviews with Search, Filter, Sort, Pagination
+    app.get("/all-reviews", async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 8;
+      const skip = (page - 1) * limit;
+
+      const search = req.query.search || "";
+      const rating = req.query.rating;
+      const sort = req.query.sort || "newest";
+
+      let query = {
+        // Search in Food Title OR Review Comment
+        $or: [
+          { foodName: { $regex: search, $options: "i" } },
+          { reviewText: { $regex: search, $options: "i" } },
+        ],
+      };
+
+      // Filter by Rating (e.g., 4 means 4 and 5 stars)
+      if (rating && rating !== "All") {
+        query.rating = { $gte: parseInt(rating) };
+      }
+
+      // Sorting Logic
+      let sortOptions = {};
+      if (sort === "newest") sortOptions = { postedAt: -1 };
+      else if (sort === "oldest") sortOptions = { postedAt: 1 };
+      else if (sort === "rating-desc")
+        sortOptions = { rating: -1 }; // Highest rated
+      else if (sort === "rating-asc") sortOptions = { rating: 1 }; // Lowest rated
+
+      try {
+        const result = await reviewsCollection
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+        const total = await reviewsCollection.countDocuments(query);
+        res.send({ result, total });
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching reviews" });
+      }
     });
 
     // reviews details api
@@ -174,14 +333,6 @@ async function run() {
       const result = await reviewsCollection.findOne(filter);
 
       res.status(200).send(result);
-    });
-
-    // search review
-    app.get("/search", async (req, res) => {
-      const searchText = req.query.search;
-      const filter = { foodName: { $regex: searchText, $options: "i" } };
-      const result = await reviewsCollection.find(filter).toArray();
-      res.send(result);
     });
 
     // my reviews api
@@ -300,6 +451,47 @@ async function run() {
       const result = await reviewsCollection.aggregate(pipeline).toArray();
 
       res.send(result);
+    });
+
+    // admin analytic or stats page
+    app.get("/admin-stats", verifyFBToken, verifyAdmin, async (req, res) => {
+      // 1. Basic Counts
+      const users = await usersCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      const reviews = await reviewsCollection.estimatedDocumentCount();
+      const sellers = await usersCollection.countDocuments({ role: "seller" });
+      const pendingSellers = await restaurantsCollection.countDocuments({
+        status: "pending",
+      });
+
+      // 2. Chart Data (Category Distribution)
+      // Example: How many foods in each category?
+      const chartData = await menuCollection
+        .aggregate([
+          {
+            $group: {
+              _id: "$category",
+              count: { $sum: 1 },
+            },
+          },
+          {
+            $project: {
+              name: "$_id",
+              count: 1,
+              _id: 0,
+            },
+          },
+        ])
+        .toArray();
+
+      res.send({
+        users,
+        menuItems,
+        reviews,
+        sellers,
+        pendingSellers,
+        chartData,
+      });
     });
 
     // await client.db("admin").command({ ping: 1 });
