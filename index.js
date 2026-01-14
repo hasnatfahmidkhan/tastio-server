@@ -54,6 +54,7 @@ async function run() {
     const favouriteCollection = tastioDB.collection("favourite");
     const restaurantsCollection = tastioDB.collection("restaurants");
     const menuCollection = tastioDB.collection("menu");
+    const postsCollection = tastioDB.collection("post");
 
     // Middleware for verify user
     const verifyAdmin = async (req, res, next) => {
@@ -693,6 +694,43 @@ async function run() {
         });
       }
     );
+
+    // post apis
+    // POST a new community post
+    app.post("/posts", verifyFBToken, async (req, res) => {
+      const post = req.body;
+      // post body: { userEmail, userName, userPhoto, image, caption, likes: [], date }
+      const result = await postsCollection.insertOne(post);
+      res.send(result);
+    });
+
+    // GET all posts (Sorted by newest)
+    app.get("/posts", async (req, res) => {
+      const result = await postsCollection.find().sort({ date: -1 }).toArray();
+      res.send(result);
+    });
+
+    // PATCH Like a post
+    app.patch("/posts/like/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const email = req.token_email;
+      const filter = { _id: new ObjectId(id) };
+
+      // Check if already liked logic needs to be handled
+      // Simple toggle logic:
+      const post = await postsCollection.findOne(filter);
+      const isLiked = post.likes.includes(email);
+
+      let updateDoc;
+      if (isLiked) {
+        updateDoc = { $pull: { likes: email } }; // Unlike
+      } else {
+        updateDoc = { $addToSet: { likes: email } }; // Like
+      }
+
+      const result = await postsCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
 
     // await client.db("admin").command({ ping: 1 });
     // console.log(
