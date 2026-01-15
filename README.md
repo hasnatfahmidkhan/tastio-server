@@ -1,4 +1,3 @@
-```markdown
 # 🍔 Tastio Server — Backend API
 
 The backend server for **Tastio**, a multi-vendor food review and discovery platform. This RESTful API is built with **Node.js, Express.js, and MongoDB**, handling authentication via **Firebase Admin SDK** and managing complex data relationships using MongoDB Aggregation pipelines.
@@ -170,4 +169,3 @@ The server is configured to run on **Vercel** or **Render**.
 
 **Hasnat Fahmid**  
 Full Stack Developer
-```
