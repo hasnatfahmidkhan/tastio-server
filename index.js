@@ -55,6 +55,7 @@ async function run() {
     const restaurantsCollection = tastioDB.collection("restaurants");
     const menuCollection = tastioDB.collection("menu");
     const postsCollection = tastioDB.collection("post");
+    const categoriesCollection = tastioDB.collection("categories");
 
     // Middleware for verify user
     const verifyAdmin = async (req, res, next) => {
@@ -195,6 +196,77 @@ async function run() {
     });
 
     // restaurants apis
+
+    // GET Restaurants (Support Status Filter & Search)
+    app.get("/restaurants", async (req, res) => {
+      const status = req.query.status;
+      const search = req.query.search || "";
+
+      let query = {};
+
+      // 1. Filter by Status (pending, verified, rejected)
+      if (status) {
+        query.status = status;
+      }
+
+      // 2. Search by Name or Location (Case Insensitive)
+      if (search) {
+        query.$or = [
+          { restaurantName: { $regex: search, $options: "i" } },
+          { location: { $regex: search, $options: "i" } },
+        ];
+      }
+
+      const result = await restaurantsCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // GET: Featured Restaurants (Verified Only)
+    app.get("/restaurants/featured", async (req, res) => {
+      const result = await restaurantsCollection
+        .find({ status: "verified" })
+        .limit(10)
+        .toArray();
+      res.send(result);
+    });
+
+    // GET: Single Restaurant Details with Menu
+    app.get("/restaurants/:id", async (req, res) => {
+      const id = req.params.id;
+
+      // 1. Get Restaurant Info
+      const restaurant = await restaurantsCollection.findOne({
+        _id: new ObjectId(id),
+      });
+
+      if (!restaurant) {
+        return res.status(404).send({ message: "Restaurant not found" });
+      }
+
+      // 2. Get Menu Items for this Restaurant
+      // Assuming menu items have 'restaurantId' or 'sellerEmail'
+      // Using 'sellerEmail' is safer if you linked it that way
+      const menu = await menuCollection
+        .find({ sellerEmail: restaurant.ownerEmail })
+        .toArray();
+
+      res.send({ restaurant, menu });
+    });
+
+    // DELETE Restaurant (Admin Only)
+    app.delete(
+      "/restaurants/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await restaurantsCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+
+    // get restaurant for seller
     app.get("/restaurants/seller/:email", verifyFBToken, async (req, res) => {
       const email = req.params.email;
       const query = { ownerEmail: email };
@@ -205,57 +277,178 @@ async function run() {
     app.get("/restaurants", async (req, res) => {
       const { status } = req.query;
       const query = { status: status };
-      const result = await restaurantsCollection.find(query).toArray();
+      const result = await restaurantsCollection
+        .find(query)
+        .sort({ appliedDate: -1 })
+        .toArray();
       res.status(200).json(result);
+    });
+
+    // GET: Check if user has an existing restaurant application
+    app.get("/restaurants/status/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { ownerEmail: email };
+      // Find the most recent application (if multiple allowed, otherwise findOne is fine)
+      const result = await restaurantsCollection.findOne(query);
+      res.send(result || { status: null }); // Send null status if no application found
     });
 
     app.post("/restaurants", async (req, res) => {
       const sellerRequest = req.body;
-      sellerRequest.averageRating = 0;
-      sellerRequest.totalReviews = 0;
-      const query = { ownerEmail: sellerRequest.ownerEmail };
-      const isExitsOwner = await restaurantsCollection.findOne(query);
-      if (isExitsOwner) {
-        return res
-          .status(200)
-          .json({ isExits: true, message: "Seler already exits" });
+
+      // Check if a rejected application exists for this email
+      const existing = await restaurantsCollection.findOne({
+        ownerEmail: sellerRequest.ownerEmail,
+      });
+
+      if (existing) {
+        // If pending or verified, don't let them apply again
+        if (existing.status === "pending" || existing.status === "verified") {
+          return res.send({
+            isExits: true,
+            message: "Application already exists",
+          });
+        }
+
+        // If rejected, UPDATE the existing document instead of inserting new
+        if (existing.status === "rejected") {
+          const filter = { ownerEmail: sellerRequest.ownerEmail };
+          const updateDoc = { $set: sellerRequest }; // Update with new data
+          const result = await restaurantsCollection.updateOne(
+            filter,
+            updateDoc
+          );
+          return res.send({ insertedId: result.modifiedCount }); // Mimic insert response
+        }
       }
+
+      // Standard Insert for new users
       const result = await restaurantsCollection.insertOne(sellerRequest);
-      res.status(201).json(result);
+      res.send(result);
     });
 
-    app.patch("/restaurants/verify/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const { email } = req.body;
+    // 1. Approve Route (Existing - kept as is)
+    app.patch(
+      "/restaurants/verify/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const { email } = req.body;
 
-      const filterRestaurant = { _id: new ObjectId(id) };
-      const updateRestaurant = {
-        $set: { status: "verified" },
-      };
-      const restaurantResult = await restaurantsCollection.updateOne(
-        filterRestaurant,
-        updateRestaurant
-      );
+        const filterRestaurant = { _id: new ObjectId(id) };
+        const updateRestaurant = {
+          $set: { status: "verified" },
+        };
+        const restaurantResult = await restaurantsCollection.updateOne(
+          filterRestaurant,
+          updateRestaurant
+        );
 
-      const filterUser = { email: email };
-      const updateUser = {
-        $set: { role: "seller" },
-      };
-      const userResult = await usersCollection.updateOne(
-        filterUser,
-        updateUser
-      );
+        const filterUser = { email: email };
+        const updateUser = {
+          $set: { role: "seller" },
+        };
+        const userResult = await usersCollection.updateOne(
+          filterUser,
+          updateUser
+        );
 
-      res.send({ restaurantResult, userResult });
+        res.send({ restaurantResult, userResult });
+      }
+    );
+
+    // 2. Reject Route (NEW)
+    app.patch(
+      "/restaurants/reject/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const { reason } = req.body; // Admin sends the reason
+
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: "rejected",
+            rejectionReason:
+              reason || "Application does not meet requirements.",
+          },
+        };
+
+        const result = await restaurantsCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
+
+    // GET: All Categories (Public)
+    // We join with 'menu' collection to get the real count of items!
+    app.get("/categories", async (req, res) => {
+      const result = await categoriesCollection
+        .aggregate([
+          {
+            $lookup: {
+              from: "menu", // Join with menu collection
+              localField: "name", // Category name (e.g. "Burger")
+              foreignField: "category", // Menu category field
+              as: "foods",
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              name: 1,
+              image: 1,
+              count: { $size: "$foods" }, // Count how many foods matched
+            },
+          },
+        ])
+        .toArray();
+
+      res.send(result);
     });
 
-    app.post("/menu", async (req, res) => {
-      const foodItem = req.body;
+    // POST: Add New Category (Admin Only)
+    app.post("/categories", verifyFBToken, verifyAdmin, async (req, res) => {
+      const category = req.body; // { name: "Pizza", image: "url" }
+      const result = await categoriesCollection.insertOne(category);
+      res.send(result);
+    });
 
-      foodItem.totalReviews = 0;
-      foodItem.averageRating = 0;
-      const result = await menuCollection.insertOne(foodItem);
-      res.status(201).json(result);
+    // DELETE: Category (Admin Only)
+    app.delete(
+      "/categories/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const result = await categoriesCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+      }
+    );
+
+    // GET: Trending Foods (Sorted by Review Count or Rating)
+    app.get("/foods/trending", async (req, res) => {
+      const result = await menuCollection
+        .find()
+        .sort({ reviewCount: -1 }) // Sort by most reviewed
+        .limit(8) // Get top 8 items
+        .toArray();
+
+      res.send(result);
+    });
+
+    // GET: Top Rated Foods (Limit 8)
+    app.get("/foods/top-rated", async (req, res) => {
+      const result = await menuCollection
+        .find()
+        .sort({ averageRating: -1 }) // Highest rating first
+        .limit(4)
+        .toArray();
+
+      res.send(result);
     });
 
     // GET /all-foods with Search, Filter, Sort, Pagination
@@ -297,12 +490,36 @@ async function run() {
       res.send({ result, total });
     });
 
-    // get food by id
+    // GET: Single Menu Item + Restaurant Details
     app.get("/menu/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await menuCollection.findOne(query);
-      res.send(result);
+      try {
+        const id = req.params.id;
+        console.log(id);
+
+        // 1. Find the Food Item
+        const foodQuery = { _id: new ObjectId(id) };
+        const foodItem = await menuCollection.findOne(foodQuery);
+
+        if (!foodItem) {
+          return res.status(404).send({ message: "Food item not found" });
+        }
+
+        // 2. Find the Restaurant Details using the 'restaurantId' from the food item
+        // We assume foodItem.restaurantId is stored as a string or ObjectId
+        const restaurantQuery = { _id: new ObjectId(foodItem.restaurantId) };
+        const restaurant = await restaurantsCollection.findOne(restaurantQuery);
+
+        // 3. Combine them into one object
+        const result = {
+          ...foodItem, // Spread all food properties (name, price, image, etc.)
+          restaurant: restaurant || {}, // Add a new property 'restaurant' with the details
+        };
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Error fetching details" });
+      }
     });
 
     // Get foods by seller email
@@ -331,6 +548,51 @@ async function run() {
       }
     );
 
+    // POST: Add a new Food Item (Seller Only)
+    app.post("/menu", verifyFBToken, verifySeller, async (req, res) => {
+      try {
+        const item = req.body;
+        const email = req.token_email; // Get email from the valid token
+
+        // 1. Find the restaurant associated with this Seller
+        const restaurant = await restaurantsCollection.findOne({
+          ownerEmail: email,
+        });
+
+        if (!restaurant) {
+          return res.status(404).send({
+            message: "Restaurant not found. Please register as a seller first.",
+          });
+        }
+
+        // 2. Construct the Food Object
+        // We strictly take the restaurantId from the database, not the frontend, for security.
+        const newItem = {
+          name: item.name,
+          price: parseFloat(item.price), // Ensure it's stored as a Number
+          category: item.category,
+          description: item.description,
+          image: item.image,
+
+          // Auto-filled System Fields
+          restaurantId: restaurant._id.toString(),
+          restaurantName: restaurant.restaurantName,
+          sellerEmail: email,
+          addedAt: new Date(),
+
+          // Default Stats
+          reviewCount: 0,
+          averageRating: 0,
+        };
+
+        const result = await menuCollection.insertOne(newItem);
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to add food item" });
+      }
+    });
+
     // update food
     app.patch("/menu/:id", verifyFBToken, verifySeller, async (req, res) => {
       const item = req.body;
@@ -352,22 +614,83 @@ async function run() {
     // Delete food (Only Seller can delete their own food)
     app.delete("/menu/:id", verifyFBToken, verifySeller, async (req, res) => {
       const id = req.params.id;
+      const email = req.token_email;
+
       const query = { _id: new ObjectId(id) };
+      const food = await menuCollection.findOne(query);
+
+      if (food.sellerEmail !== email) {
+        return res.status(403).send({ message: "forbidden action" });
+      }
+
       const result = await menuCollection.deleteOne(query);
       res.send(result);
     });
 
     //? Reviews Get Api
-    // top reviews api
+    // GET: Latest Reviews (Limit 4)
     app.get("/latest-reviews", async (req, res) => {
-      const result = await reviewsCollection
-        .find()
-        .sort({ postedAt: -1 })
-        .limit(8)
-        .toArray();
-      res.status(200).send(result);
-    });
+      try {
+        const result = await reviewsCollection
+          .aggregate([
+            // 1. Sort by Newest first
+            { $sort: { postedAt: -1 } },
 
+            // 2. Limit to 4 items
+            { $limit: 4 },
+
+            // 3. Prepare ID for Lookup
+            {
+              $addFields: {
+                restaurantObjId: { $toObjectId: "$restaurantId" },
+              },
+            },
+
+            // 4. Lookup Restaurant Info
+            {
+              $lookup: {
+                from: "restaurants",
+                localField: "restaurantObjId",
+                foreignField: "_id",
+                as: "resDetails",
+              },
+            },
+
+            // 5. Unwind
+            {
+              $unwind: {
+                path: "$resDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            // 6. Project (Optimize Data)
+            {
+              $project: {
+                _id: 1,
+                foodName: 1,
+                reviewText: 1,
+                rating: 1,
+                postedAt: 1,
+                reviewerName: 1,
+                reviewerPhoto: 1,
+                photo: 1,
+                restaurantId: 1,
+
+                // Flattened Details
+                restaurantName: "$resDetails.restaurantName",
+                location: "$resDetails.location",
+              },
+            },
+          ])
+          .toArray();
+
+        res.status(200).send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Error fetching latest reviews" });
+      }
+    });
     // GET /all-reviews with Search, Filter, Sort, Pagination
     app.get("/all-reviews", async (req, res) => {
       const page = parseInt(req.query.page) || 1;
@@ -378,49 +701,159 @@ async function run() {
       const rating = req.query.rating;
       const sort = req.query.sort || "newest";
 
-      let query = {
-        // Search in Food Title OR Review Comment
+      let matchQuery = {
         $or: [
           { foodName: { $regex: search, $options: "i" } },
           { reviewText: { $regex: search, $options: "i" } },
         ],
       };
 
-      // Filter by Rating (e.g., 4 means 4 and 5 stars)
       if (rating && rating !== "All") {
-        query.rating = { $gte: parseInt(rating) };
+        matchQuery.rating = { $gte: parseInt(rating) };
       }
 
-      // Sorting Logic
       let sortOptions = {};
       if (sort === "newest") sortOptions = { postedAt: -1 };
       else if (sort === "oldest") sortOptions = { postedAt: 1 };
-      else if (sort === "rating-desc")
-        sortOptions = { rating: -1 }; // Highest rated
-      else if (sort === "rating-asc") sortOptions = { rating: 1 }; // Lowest rated
+      else if (sort === "rating-desc") sortOptions = { rating: -1 };
+      else if (sort === "rating-asc") sortOptions = { rating: 1 };
 
       try {
         const result = await reviewsCollection
-          .find(query)
-          .sort(sortOptions)
-          .skip(skip)
-          .limit(limit)
+          .aggregate([
+            // 1. Filter
+            { $match: matchQuery },
+
+            // 2. Sort
+            { $sort: sortOptions },
+
+            // 3. Pagination
+            { $skip: skip },
+            { $limit: limit },
+
+            // 4. Prepare ID for Lookup (Assuming restaurantId is a String in reviews)
+            {
+              $addFields: {
+                restaurantObjId: { $toObjectId: "$restaurantId" },
+              },
+            },
+
+            // 5. Lookup (Join)
+            {
+              $lookup: {
+                from: "restaurants",
+                localField: "restaurantObjId",
+                foreignField: "_id",
+                as: "resDetails",
+              },
+            },
+
+            // 6. Unwind (Flatten array)
+            {
+              $unwind: {
+                path: "$resDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            // 7. Project (The Optimization Step)
+            // We explicitly pick ONLY what we need.
+            {
+              $project: {
+                _id: 1,
+                foodName: 1,
+                reviewText: 1,
+                rating: 1,
+                postedAt: 1,
+                reviewerName: 1,
+                reviewerPhoto: 1,
+                photo: 1, // Food/Review Photo
+                restaurantId: 1, // Original ID from review
+
+                // Extract ONLY these two fields from the joined restaurant data
+                restaurantName: "$resDetails.restaurantName",
+                location: "$resDetails.location",
+              },
+            },
+          ])
           .toArray();
-        const total = await reviewsCollection.countDocuments(query);
+
+        const total = await reviewsCollection.countDocuments(matchQuery);
+
         res.send({ result, total });
       } catch (error) {
+        console.error(error);
         res.status(500).send({ message: "Error fetching reviews" });
       }
     });
 
-    // reviews details api
-    app.get("/reviews/:id", verifyFBToken, async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
+    // GET: Single Review Details with Restaurant Info
+    app.get("/reviews/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
 
-      const result = await reviewsCollection.findOne(filter);
+        const result = await reviewsCollection
+          .aggregate([
+            // 1. Find the specific review
+            { $match: { _id: new ObjectId(id) } },
 
-      res.status(200).send(result);
+            // 2. Prepare ID for Lookup
+            {
+              $addFields: {
+                restaurantObjId: { $toObjectId: "$restaurantId" },
+              },
+            },
+
+            // 3. Lookup Restaurant Info
+            {
+              $lookup: {
+                from: "restaurants",
+                localField: "restaurantObjId",
+                foreignField: "_id",
+                as: "resDetails",
+              },
+            },
+
+            // 4. Unwind
+            {
+              $unwind: {
+                path: "$resDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            // 5. Project (Flatten the structure)
+            {
+              $project: {
+                _id: 1,
+                foodName: 1,
+                reviewText: 1,
+                rating: 1,
+                postedAt: 1,
+                reviewerName: 1,
+                reviewerEmail: 1,
+                reviewerPhoto: 1,
+                photo: 1,
+                restaurantId: 1,
+
+                // Add the extra fields directly to the root object
+                restaurantName: "$resDetails.restaurantName",
+                location: "$resDetails.location",
+              },
+            },
+          ])
+          .toArray();
+
+        // Aggregate returns an array, but we want a single object
+        if (result.length === 0) {
+          return res.status(404).send({ message: "Review not found" });
+        }
+
+        res.status(200).send(result[0]);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Error fetching review details" });
+      }
     });
 
     // my reviews api
@@ -696,6 +1129,16 @@ async function run() {
     );
 
     // post apis
+    // GET: Latest Community Posts (Limit 3)
+    app.get("/posts/latest", async (req, res) => {
+      const result = await postsCollection
+        .find()
+        .sort({ date: -1 }) // Newest first
+        .limit(3)
+        .toArray();
+
+      res.send(result);
+    });
     // POST a new community post
     app.post("/posts", verifyFBToken, async (req, res) => {
       const post = req.body;
