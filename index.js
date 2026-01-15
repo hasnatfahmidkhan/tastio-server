@@ -143,6 +143,29 @@ async function run() {
       res.send(result);
     });
 
+    // PATCH: Update User Profile
+    app.patch("/users/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const { name, photo } = req.body;
+
+      // Security check
+      if (email !== req.token_email) {
+        return res.status(403).send({ message: "Forbidden" });
+      }
+
+      const filter = { email: email };
+      const updateDoc = {
+        $set: {
+          name: name,
+          photo: photo,
+        },
+      };
+
+      const result = await usersCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+
+    
     // PATCH Update User Role
     app.patch(
       "/users/role/:id",
