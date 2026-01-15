@@ -150,12 +150,29 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         const id = req.params.id;
+
         const { role } = req.body;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $set: { role: role },
-        };
-        const result = await usersCollection.updateOne(filter, updateDoc);
+        const requesterEmail = req.token_email;
+
+        const query = { _id: new ObjectId(id) };
+        const targetUser = await usersCollection.findOne(query);
+
+        // 🔒 Security Check 1: Protected User Check (Dynamic)
+        if (targetUser.isProtected) {
+          return res
+            .status(403)
+            .send({ message: "Action Forbidden: This user is protected." });
+        }
+
+        // 🔒 Security Check 2: Self Check
+        if (requesterEmail === targetUser.email) {
+          return res
+            .status(403)
+            .send({ message: "You cannot change your own role." });
+        }
+
+        const updateDoc = { $set: { role: role } };
+        const result = await usersCollection.updateOne(query, updateDoc);
         res.send(result);
       }
     );
