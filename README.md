@@ -17,11 +17,34 @@ The backend server for **Tastio**, a multi-vendor food review and discovery plat
 
 ## 🛠️ Tech Stack
 
-*   **Runtime:** [Node.js](https://nodejs.org/)
-*   **Framework:** [Express.js](https://expressjs.com/)
+*   **Runtime:** [Node.js](https://nodejs.org/) (ES Modules)
+*   **Framework:** [Express.js](https://expressjs.com/) (Module Pattern Architecture)
 *   **Database:** [MongoDB](https://www.mongodb.com/) (Native Driver)
 *   **Authentication:** [Firebase Admin SDK](https://firebase.google.com/docs/admin/setup)
 *   **Utilities:** `dotenv` (Env variables), `cors` (Cross-Origin Resource Sharing).
+
+---
+
+## 🏗️ Architecture & Module Pattern
+
+The application is structured using a feature-based Module Pattern with ES Modules (`import/export`). Each domain has its own dedicated directory containing routes, controllers, and services.
+
+```text
+Tastio Server/
+├── config/              # MongoDB and Firebase configurations
+├── middlewares/         # Auth and RBAC middleware
+├── modules/             # Feature domains
+│   ├── user/            # User management
+│   ├── restaurant/      # Seller/restaurant logic
+│   ├── menu/            # Food items logic
+│   ├── category/        # Category management
+│   ├── review/          # Review and leaderboard logic
+│   ├── favourite/       # User favourites
+│   ├── post/            # Community posts
+│   └── admin/           # Admin dashboards and management
+├── app.js               # Express application setup
+└── index.js             # Entry point
+```
 
 ---
 
